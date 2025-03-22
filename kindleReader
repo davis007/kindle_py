@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# kindleReader - Kindle Reader アプリケーション起動スクリプト
+# 
+# 使い方:
+#   ./kindleReader
+#
+# 注意: 
+#   このスクリプトを実行する前に、以下を確認してください:
+#   - Python仮想環境が ./myenv に存在すること
+#   - app.py が現在のディレクトリに存在すること
+#   - 初回実行時は `chmod +x kindleReader` で実行権限を付与してください
+
+# スクリプトが存在するディレクトリに移動
+cd "$(dirname "$0")"
+
+echo "Python仮想環境をアクティブ化しています..."
+# Python仮想環境をアクティブ化
+source ./myenv/bin/activate
+
+echo "Kindle Readerアプリケーションを起動しています..."
+# Flaskアプリケーションを起動
+python app.py
+
+# 終了
+echo "アプリケーションを終了しました。"
+

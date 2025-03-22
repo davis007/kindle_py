@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Manager</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+        h1 { margin-bottom: 20px; }
+        .container { display: flex; }
+        .folder-list { width: 300px; padding-right: 20px; }
+        .pdf-list { flex-grow: 1; }
+        .pdf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; }
+        .pdf-item { text-align: center; }
+        .pdf-item img { max-width: 100%; height: auto; border: 1px solid #ddd; }
+        .folder-link, .pdf-link { text-decoration: none; color: #333; }
+        .folder-link:hover, .pdf-link:hover { text-decoration: underline; }
+        .breadcrumb { margin-bottom: 20px; }
+        .folder-structure { min-width: 300px; }
+        .folder-structure ul { list-style-type: none; padding-left: 20px; }
+        .folder-structure > ul { padding-left: 0; }
+        .search-form { margin-bottom: 20px; }
+        .search-form input[type="text"] { width: 300px; padding: 5px; }
+        .search-form input[type="submit"] { padding: 5px 10px; }
+    </style>
+</head>
+<body>
+    <h1>PDF Manager</h1>
+
+     <form class="search-form" action="{{ url_for('index') }}" method="GET">
+        <input type="text" name="search" placeholder="書籍名で検索..." value="{{ search_query }}">
+        <input type="hidden" name="current_path" value="{{ current_path }}">
+        <button type="submit">検索</button>
+    </form>
+
+    <div class="breadcrumb">
+        <a href="/">ホーム</a>
+        {% for part in current_path.split('/') %}
+            {% if part %}
+                / <a href="{{ url_for('index', folder_path='/'.join(current_path.split('/')[:loop.index])) }}">{{ part }}</a>
+            {% endif %}
+        {% endfor %}
+    </div>
+    <div class="container">
+        <div class="folder-list">
+            <h2>フォルダ一覧</h2>
+            <div class="folder-structure">
+                {% macro render_folder_structure(structure) %}
+                    <ul>
+                    {% for folder in structure %}
+                        <li>
+                            <a href="{{ url_for('index', folder_path=folder.path) }}" class="folder-link">
+                                {{ folder.name }}
+                            </a>
+                            {% if folder.children %}
+                                {{ render_folder_structure(folder.children) }}
+                            {% endif %}
+                        </li>
+                    {% endfor %}
+                    </ul>
+                {% endmacro %}
+                {{ render_folder_structure(folder_structure) }}
+            </div>
+        </div>
+        <div class="pdf-list">
+        <h2>PDF一覧</h2>
+        {% if pdfs %}
+            <div class="pdf-grid">
+                {% for pdf in pdfs %}
+                    <div class="pdf-item">
+                        <a href="{{ url_for('view_pdf', filename=pdf) }}" class="pdf-link" target="_blank">
+                            <img src="{{ url_for('thumbnail', filename=pdf) }}" alt="{{ pdf|basename }}">
+                            <p>{{ pdf|basename }}</p>
+                        </a>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p>該当するPDFが見つかりませんでした。</p>
+        {% endif %}
+        <p>{{ pdfs|length }} 件のPDFが見つかりました。</p>
+    </div>
+    </div>
+</body>
+</html>

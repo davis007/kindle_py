@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>PDF Viewer</title>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.9.359/pdf.min.js"></script>
+	<style>
+		body, html {
+			margin: 0;
+			padding: 0;
+			height: 100%;
+			font-family: Arial, sans-serif;
+		}
+		#pdf-viewer {
+			width: 100%;
+			height: 100%;
+			display: flex;
+			flex-direction: column;
+		}
+		#pdf-render {
+			flex-grow: 1;
+			overflow: auto;
+			display: flex;
+			justify-content: center;
+			align-items: flex-start;
+			position: relative;
+		}
+		#controls {
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			padding: 10px;
+			background-color: #f0f0f0;
+		}
+		#page-num, #page-count {
+			margin: 0 10px;
+		}
+		.nav-button {
+			cursor: pointer;
+			padding: 5px 10px;
+			background-color: #4CAF50;
+			color: white;
+			border: none;
+			border-radius: 3px;
+			margin: 0 5px;
+		}
+		.nav-button:hover {
+			background-color: #45a049;
+		}
+		.nav-button:disabled {
+			background-color: #cccccc;
+			cursor: not-allowed;
+		}
+		.side-nav {
+			position: fixed;
+			top: 50%;
+			transform: translateY(-50%);
+			background-color: rgba(0,0,0,0.5);
+			color: white;
+			padding: 20px;
+			cursor: pointer;
+			z-index: 1000;
+		}
+		#prev-page { left: 0; }
+		#next-page { right: 0; }
+		#loading {
+			position: fixed;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			font-size: 24px;
+			display: none;
+		}
+		.page-link {
+			position: absolute;
+			top: 0;
+			height: 100%;
+			width: 50%;
+			text-decoration: none;
+			background: transparent;
+			cursor: pointer;
+			z-index: 100;
+		}
+
+		#prev-link {
+			left: 0;
+		}
+		#next-link {
+			right: 0;
+		}
+		.page-link-text {
+			position: absolute;
+			top: 50%;
+			transform: translateY(-50%);
+			padding: 10px;
+			background: rgba(0, 0, 0, 0.1);
+			color: #666;
+			border-radius: 5px;
+			opacity: 0;
+			transition: opacity 0.3s;
+		}
+		.page-link:hover .page-link-text {
+			opacity: 1;
+		}
+		#prev-link .page-link-text {
+			left: 20px;
+		}
+		#next-link .page-link-text {
+			right: 20px;
+		}
+	</style>
+</head>
+<body>
+	<div id="pdf-viewer">
+		<div id="controls">
+			<button id="prev" class="nav-button" aria-label="前のページ">&#9664; 前のページ</button>
+			<span>ページ: <span id="page-num"></span> / <span id="page-count"></span></span>
+			<button id="next" class="nav-button" aria-label="次のページ">次のページ &#9654;</button>
+			<button id="zoomIn" class="nav-button" aria-label="拡大">拡大 &#128270;</button>
+			<button id="zoomOut" class="nav-button" aria-label="縮小">縮小 &#128269;</button>
+			<div id="page-jump">
+				<label for="page-input">ページ指定:</label>
+				<input type="number" id="page-input" min="1" aria-label="ページ番号を入力">
+				<button id="jump-button" class="nav-button" aria-label="指定ページへジャンプ">移動</button>
+			</div>
+			<button id="fullscreen" class="nav-button" aria-label="全画面表示">全画面 &#128470;</button>
+		</div>
+		<div id="pdf-render">
+			<a id="prev-link" class="page-link" href="#" aria-label="前のページへ">
+				<span class="page-link-text">前のページ</span>
+			</a>
+			<a id="next-link" class="page-link" href="#" aria-label="次のページへ">
+				<span class="page-link-text">次のページ</span>
+			</a>
+		</div>
+	</div>
+	<div id="prev-page" class="side-nav" aria-label="前のページ">&#9664;</div>
+	<div id="next-page" class="side-nav" aria-label="次のページ">&#9654;</div>
+	<div id="loading">読み込み中...</div>
+
+	<script>
+		const url = '{{ pdf_url }}';
+		let pdfDoc = null,
+			pageNum = 1,
+			pageRendering = false,
+			pageNumPending = null,
+			scale = null;
+
+		const pdfRender = document.getElementById('pdf-render');
+		const pageNumSpan = document.getElementById('page-num');
+		const pageCountSpan = document.getElementById('page-count');
+		const prevButton = document.getElementById('prev');
+		const nextButton = document.getElementById('next');
+		const zoomInButton = document.getElementById('zoomIn');
+		const zoomOutButton = document.getElementById('zoomOut');
+		const fullscreenButton = document.getElementById('fullscreen');
+		const loadingDiv = document.getElementById('loading');
+		const pageInput = document.getElementById('page-input');
+		const jumpButton = document.getElementById('jump-button');
+
+		function jumpToPage() {
+			const pageNumber = parseInt(pageInput.value);
+			if (pageNumber >= 1 && pageNumber <= pdfDoc.numPages) {
+				pageNum = pageNumber;
+				queueRenderPage(pageNum);
+			} else {
+				alert('有効なページ番号を入力してください。');
+			}
+		}
+
+		jumpButton.addEventListener('click', jumpToPage);
+		pageInput.addEventListener('keypress', function(e) {
+			if (e.key === 'Enter') {
+				jumpToPage();
+			}
+		});
+
+		function updatePageInputMax() {
+			pageInput.max = pdfDoc.numPages;
+		}
+
+		pdfjsLib.getDocument(url).promise.then(function(pdf) {
+			pdfDoc = pdf;
+			pageCountSpan.textContent = pdf.numPages;
+			updatePageInputMax();
+			hideLoading();
+			renderPage(pageNum);
+		}).catch(function(error) {
+			console.error('Error loading PDF:', error);
+			hideLoading();
+			alert('PDFの読み込み中にエラーが発生しました。');
+		});
+
+		function showLoading() {
+			loadingDiv.style.display = 'block';
+		}
+
+		function hideLoading() {
+			loadingDiv.style.display = 'none';
+		}
+
+		function calculateScaleToFitHeight(page) {
+			// Get the viewport height (available height for the PDF)
+			const viewerHeight = pdfRender.clientHeight;
+			
+			// Get the original page viewport at scale 1.0
+			const originalViewport = page.getViewport({ scale: 1.0 });
+			
+			// Calculate the scale needed to fit the page height to the viewer height
+			// Subtract a small margin to ensure it fits comfortably
+			const margin = 10; // pixels
+			return (viewerHeight - margin) / originalViewport.height;
+		}
+
+		function renderPage(num) {
+			pageRendering = true;
+			showLoading();
+
+			pdfDoc.getPage(num).then(function(page) {
+				// Calculate the scale to fit height if it's not set yet (first page load)
+				if (scale === null) {
+					scale = calculateScaleToFitHeight(page);
+				}
+				const viewport = page.getViewport({scale: scale});
+				const canvas = document.createElement('canvas');
+				const ctx = canvas.getContext('2d');
+				canvas.height = viewport.height;
+				canvas.width = viewport.width;
+
+				const renderContext = {
+					canvasContext: ctx,
+					viewport: viewport
+				};
+				const renderTask = page.render(renderContext);
+
+				renderTask.promise.then(function() {
+					pageRendering = false;
+					hideLoading();
+					if (pageNumPending !== null) {
+						renderPage(pageNumPending);
+						pageNumPending = null;
+					}
+					updateNavigationUI();
+				});
+
+				pdfRender.querySelector('canvas')?.remove();
+				pdfRender.insertBefore(canvas, pdfRender.firstChild);
+				pageNumSpan.textContent = num;
+
+				updateButtonStates();
+			});
+		}
+
+		function queueRenderPage(num) {
+			if (pageRendering) {
+				pageNumPending = num;
+			} else {
+				renderPage(num);
+			}
+		}
+
+		function onPrevPage() {
+			if (pageNum <= 1) {
+				return;
+			}
+			pageNum--;
+			queueRenderPage(pageNum);
+		}
+
+		function onNextPage() {
+			if (pageNum >= pdfDoc.numPages) {
+				return;
+			}
+			pageNum++;
+			queueRenderPage(pageNum);
+		}
+
+		function updateButtonStates() {
+			prevButton.disabled = pageNum <= 1;
+			nextButton.disabled = pageNum >= pdfDoc.numPages;
+		}
+
+		function updateNavigationUI() {
+			const prevLink = document.getElementById('prev-link');
+			const nextLink = document.getElementById('next-link');
+
+			prevLink.style.display = pageNum <= 1 ? 'none' : 'block';
+			nextLink.style.display = pageNum >= pdfDoc.numPages ? 'none' : 'block';
+		}
+
+		function onZoomIn() {
+			scale *= 1.2;
+			renderPage(pageNum);
+		}
+
+		function onZoomOut() {
+			scale /= 1.2;
+			renderPage(pageNum);
+		}
+
+		function toggleFullScreen() {
+			if (!document.fullscreenElement) {
+				document.documentElement.requestFullscreen();
+			} else {
+				if (document.exitFullscreen) {
+					document.exitFullscreen();
+				}
+			}
+		}
+
+		// イベントリスナーの設定
+		prevButton.addEventListener('click', onPrevPage);
+		nextButton.addEventListener('click', onNextPage);
+		document.getElementById('prev-page').addEventListener('click', onPrevPage);
+		document.getElementById('next-page').addEventListener('click', onNextPage);
+		zoomInButton.addEventListener('click', onZoomIn);
+		zoomOutButton.addEventListener('click', onZoomOut);
+		fullscreenButton.addEventListener('click', toggleFullScreen);
+
+		// スペースキーと矢印キーのイベントリスナー
+		document.addEventListener('keydown', function(e) {
+			if (e.key === 'ArrowLeft') {
+				e.preventDefault();
+				onPrevPage();
+			}
+			else if (e.key === 'ArrowRight' || e.key === ' ') {
+				e.preventDefault();
+				onNextPage();
+			}
+		});
+
+		// リンクのクリックイベントを設定
+		document.getElementById('prev-link').addEventListener('click', function(e) {
+			e.preventDefault();
+			onPrevPage();
+		});
+
+		document.getElementById('next-link').addEventListener('click', function(e) {
+			e.preventDefault();
+			onNextPage();
+		});
+	</script>
+</body>
+</html>

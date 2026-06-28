@@ -134,6 +134,9 @@
         <div class="pdf-grid">
           {% for pdf in pdfs %}
           <div class="pdf-item">
+            {% if pdf in completed_paths %}
+            <span class="completed-badge">読了</span>
+            {% endif %}
             <a
               href="{{ url_for('view_pdf', filename=pdf) }}"
               class="pdf-link"
@@ -154,18 +157,5 @@
         <p>{{ pdfs|length }} 件のPDFが見つかりました。</p>
       </div>
     </div>
-    <script>
-      document.querySelectorAll(".pdf-item").forEach(function (item) {
-        const link = item.querySelector("a");
-        if (
-          localStorage.getItem("kindleCompleted:" + link.pathname) === "true"
-        ) {
-          const badge = document.createElement("span");
-          badge.className = "completed-badge";
-          badge.textContent = "読了";
-          item.appendChild(badge);
-        }
-      });
-    </script>
   </body>
 </html>

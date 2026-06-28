@@ -36,6 +36,16 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS reading_progress (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pdf_path TEXT NOT NULL UNIQUE,
+        last_page INTEGER NOT NULL DEFAULT 1,
+        total_pages INTEGER,
+        completed INTEGER NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
     cursor.execute('DELETE FROM pdf_files')
     conn.commit()
     conn.close()
@@ -137,6 +147,43 @@ def get_pdf_files(path):
     return results
 
 
+@app.route('/api/progress/<path:filename>', methods=['GET'])
+def get_progress(filename):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        'SELECT last_page, total_pages, completed FROM reading_progress WHERE pdf_path = ?',
+        (filename,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {'last_page': row[0], 'total_pages': row[1], 'completed': bool(row[2])}
+    return {'last_page': 1, 'total_pages': None, 'completed': False}
+
+
+@app.route('/api/progress/<path:filename>', methods=['POST'])
+def save_progress(filename):
+    data = request.get_json()
+    page = data.get('page', 1)
+    total_pages = data.get('total_pages')
+    completed = 1 if (total_pages and page >= total_pages) else 0
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+    INSERT INTO reading_progress (pdf_path, last_page, total_pages, completed, updated_at)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(pdf_path) DO UPDATE SET
+        last_page = excluded.last_page,
+        total_pages = excluded.total_pages,
+        completed = excluded.completed,
+        updated_at = CURRENT_TIMESTAMP
+    ''', (filename, page, total_pages, completed))
+    conn.commit()
+    conn.close()
+    return {'ok': True}
+
+
 @app.route('/')
 @app.route('/<path:folder_path>')
 def index(folder_path=''):
@@ -149,10 +196,17 @@ def index(folder_path=''):
     else:
         pdfs = get_pdf_files(folder_path)
 
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT pdf_path FROM reading_progress WHERE completed = 1')
+    completed_paths = {row[0] for row in cursor.fetchall()}
+    conn.close()
+
     return render_template('index.html',
                            current_path=current_path if search_query else folder_path,
                            folder_structure=folder_structure,
                            pdfs=pdfs,
+                           completed_paths=completed_paths,
                            search_query=search_query)
 
 

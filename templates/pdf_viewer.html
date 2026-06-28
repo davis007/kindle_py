@@ -173,18 +173,15 @@
         "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
       const url = "{{ pdf_url }}";
-      const STORAGE_KEY = "kindleLastPage:" + location.pathname;
-      const savedPage = parseInt(localStorage.getItem(STORAGE_KEY)) || 1;
-      const initialPage =
-        parseInt(new URLSearchParams(location.search).get("p")) || savedPage;
+      const pdfPath = location.pathname.slice("/view/".length);
+      const urlPage = parseInt(new URLSearchParams(location.search).get("p"));
       let pdfDoc = null,
-        pageNum = initialPage,
+        pageNum = urlPage || 1,
         pageRendering = false,
         pageNumPending = null,
         scale = null;
 
-      const COMPLETED_KEY = "kindleCompleted:" + location.pathname;
-
+      let saveTimer = null;
       function updateUrlPage(num) {
         const params = new URLSearchParams(location.search);
         params.set("p", num);
@@ -193,10 +190,17 @@
           "",
           location.pathname + "?" + params.toString(),
         );
-        localStorage.setItem(STORAGE_KEY, num);
-        if (pdfDoc && num === pdfDoc.numPages) {
-          localStorage.setItem(COMPLETED_KEY, "true");
-        }
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(function () {
+          fetch("/api/progress/" + pdfPath, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              page: num,
+              total_pages: pdfDoc ? pdfDoc.numPages : null,
+            }),
+          }).catch(function () {});
+        }, 500);
       }
 
       const pdfRender = document.getElementById("pdf-render");
@@ -234,11 +238,18 @@
 
       pdfjsLib
         .getDocument(url)
-        .promise.then(function (pdf) {
+        .promise.then(async function (pdf) {
           pdfDoc = pdf;
           pageCountSpan.textContent = pdf.numPages;
           updatePageInputMax();
           hideLoading();
+          if (!urlPage) {
+            try {
+              const res = await fetch("/api/progress/" + pdfPath);
+              const data = await res.json();
+              if (data.last_page) pageNum = data.last_page;
+            } catch (e) {}
+          }
           renderPage(pageNum);
         })
         .catch(function (error) {

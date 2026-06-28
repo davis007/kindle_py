@@ -183,6 +183,8 @@
         pageNumPending = null,
         scale = null;
 
+      const COMPLETED_KEY = "kindleCompleted:" + location.pathname;
+
       function updateUrlPage(num) {
         const params = new URLSearchParams(location.search);
         params.set("p", num);
@@ -192,6 +194,9 @@
           location.pathname + "?" + params.toString(),
         );
         localStorage.setItem(STORAGE_KEY, num);
+        if (pdfDoc && num === pdfDoc.numPages) {
+          localStorage.setItem(COMPLETED_KEY, "true");
+        }
       }
 
       const pdfRender = document.getElementById("pdf-render");

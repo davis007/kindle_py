@@ -42,6 +42,12 @@ def init_db():
         cursor.execute('ALTER TABLE pdf_files ADD COLUMN file_mtime REAL')
     except sqlite3.OperationalError:
         pass
+    # 重複レコードを除去（path が同じものは id が大きい方を残す）
+    cursor.execute('''
+        DELETE FROM pdf_files WHERE id NOT IN (
+            SELECT MAX(id) FROM pdf_files GROUP BY path
+        )
+    ''')
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS reading_progress (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -334,21 +340,22 @@ def generate_kindle_list(base_dir):
     # 新規・更新ファイルのみ DB に反映
     added = updated = 0
     for rel_path, info in disk_files.items():
-        db_mtime = db_files.get(rel_path)
-        if db_mtime is None:
+        if rel_path not in db_files:
             normalized = normalize_japanese(info['filename'])
             cursor.execute(
                 'INSERT INTO pdf_files (filename, normalized_filename, path, folder, file_mtime) VALUES (?, ?, ?, ?, ?)',
                 (info['filename'], normalized, rel_path, info['folder'], info['mtime'])
             )
             added += 1
-        elif abs(db_mtime - info['mtime']) > 0.001:
-            normalized = normalize_japanese(info['filename'])
-            cursor.execute(
-                'UPDATE pdf_files SET filename=?, normalized_filename=?, folder=?, file_mtime=? WHERE path=?',
-                (info['filename'], normalized, info['folder'], info['mtime'], rel_path)
-            )
-            updated += 1
+        else:
+            db_mtime = db_files[rel_path]
+            if db_mtime is None or abs(db_mtime - info['mtime']) > 0.001:
+                normalized = normalize_japanese(info['filename'])
+                cursor.execute(
+                    'UPDATE pdf_files SET filename=?, normalized_filename=?, folder=?, file_mtime=? WHERE path=?',
+                    (info['filename'], normalized, info['folder'], info['mtime'], rel_path)
+                )
+                updated += 1
 
     conn.commit()
     conn.close()

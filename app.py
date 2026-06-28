@@ -31,11 +31,17 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         filename TEXT NOT NULL,
         normalized_filename TEXT NOT NULL,
-        path TEXT NOT NULL,
+        path TEXT NOT NULL UNIQUE,
         folder TEXT NOT NULL,
+        file_mtime REAL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
+    # 既存テーブルへの file_mtime カラム追加（初回マイグレーション）
+    try:
+        cursor.execute('ALTER TABLE pdf_files ADD COLUMN file_mtime REAL')
+    except sqlite3.OperationalError:
+        pass
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS reading_progress (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,7 +52,6 @@ def init_db():
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
-    cursor.execute('DELETE FROM pdf_files')
     conn.commit()
     conn.close()
 
@@ -198,8 +203,35 @@ def index(folder_path=''):
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT pdf_path FROM reading_progress WHERE completed = 1')
-    completed_paths = {row[0] for row in cursor.fetchall()}
+
+    cursor.execute('SELECT pdf_path, last_page, total_pages, completed FROM reading_progress')
+    progress_map = {}
+    completed_paths = set()
+    for pdf_path, last_page, total_pages, completed in cursor.fetchall():
+        pct = round(last_page / total_pages * 100) if total_pages else 0
+        progress_map[pdf_path] = {'last_page': last_page, 'total_pages': total_pages, 'pct': pct}
+        if completed:
+            completed_paths.add(pdf_path)
+
+    cursor.execute('''
+        SELECT pdf_path, last_page, total_pages, completed, updated_at
+        FROM reading_progress
+        ORDER BY updated_at DESC
+        LIMIT 8
+    ''')
+    recent_books = []
+    for pdf_path, last_page, total_pages, completed, updated_at in cursor.fetchall():
+        pct = round(last_page / total_pages * 100) if total_pages else 0
+        recent_books.append({
+            'path': pdf_path,
+            'name': os.path.basename(pdf_path),
+            'last_page': last_page,
+            'total_pages': total_pages,
+            'pct': pct,
+            'completed': bool(completed),
+            'updated_at': updated_at[:10] if updated_at else '',
+        })
+
     conn.close()
 
     return render_template('index.html',
@@ -207,6 +239,8 @@ def index(folder_path=''):
                            folder_structure=folder_structure,
                            pdfs=pdfs,
                            completed_paths=completed_paths,
+                           progress_map=progress_map,
+                           recent_books=recent_books,
                            search_query=search_query)
 
 
@@ -267,36 +301,72 @@ def cleanup_old_kindle_lists(keep_filename):
 
 def generate_kindle_list(base_dir):
     output_filename = f"{datetime.now().strftime('%Y-%m-%d')}_kindleList.txt"
-    init_db()
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    with open(output_filename, 'w', encoding='utf-8') as f:
-        for root, dirs, files in os.walk(base_dir):
-            level = root.replace(base_dir, '').count(os.sep)
-            folder_path = root.replace(base_dir, '') or '/'
+    # DB上の既存ファイル一覧（path → mtime）
+    cursor.execute('SELECT path, file_mtime FROM pdf_files')
+    db_files = {row[0]: row[1] for row in cursor.fetchall()}
 
-            indent = ' ' * 4 * level
-            f.write(f'{indent}{os.path.basename(root)}/\n')
-            dirs.sort()
+    # ディスク上のファイルを走査
+    disk_files = {}
+    for root, dirs, files in os.walk(base_dir):
+        dirs.sort()
+        folder_path = root.replace(base_dir, '') or '/'
+        for file in sorted(files):
+            if not file.startswith('.') and file.lower().endswith('.pdf'):
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, base_dir)
+                disk_files[rel_path] = {
+                    'filename': file,
+                    'folder': folder_path,
+                    'mtime': os.path.getmtime(full_path),
+                }
 
-            sub_indent = ' ' * 4 * (level + 1)
-            for file in sorted(files):
-                if not file.startswith('.') and file.lower().endswith('.pdf'):
-                    f.write(f'{sub_indent}{file}\n')
-                    normalized_filename = normalize_japanese(file)
-                    relative_path = os.path.relpath(os.path.join(root, file), base_dir)
-                    cursor.execute(
-                        'INSERT INTO pdf_files (filename, normalized_filename, path, folder) VALUES (?, ?, ?, ?)',
-                        (file, normalized_filename, relative_path, folder_path)
-                    )
+    # DB から削除されたファイルを除去
+    removed = 0
+    for path in list(db_files):
+        if path not in disk_files:
+            cursor.execute('DELETE FROM pdf_files WHERE path = ?', (path,))
+            removed += 1
+
+    # 新規・更新ファイルのみ DB に反映
+    added = updated = 0
+    for rel_path, info in disk_files.items():
+        db_mtime = db_files.get(rel_path)
+        if db_mtime is None:
+            normalized = normalize_japanese(info['filename'])
+            cursor.execute(
+                'INSERT INTO pdf_files (filename, normalized_filename, path, folder, file_mtime) VALUES (?, ?, ?, ?, ?)',
+                (info['filename'], normalized, rel_path, info['folder'], info['mtime'])
+            )
+            added += 1
+        elif abs(db_mtime - info['mtime']) > 0.001:
+            normalized = normalize_japanese(info['filename'])
+            cursor.execute(
+                'UPDATE pdf_files SET filename=?, normalized_filename=?, folder=?, file_mtime=? WHERE path=?',
+                (info['filename'], normalized, info['folder'], info['mtime'], rel_path)
+            )
+            updated += 1
 
     conn.commit()
     conn.close()
 
+    # リストファイルを生成
+    with open(output_filename, 'w', encoding='utf-8') as f:
+        for root, dirs, files in os.walk(base_dir):
+            level = root.replace(base_dir, '').count(os.sep)
+            indent = ' ' * 4 * level
+            f.write(f'{indent}{os.path.basename(root)}/\n')
+            dirs.sort()
+            sub_indent = ' ' * 4 * (level + 1)
+            for file in sorted(files):
+                if not file.startswith('.') and file.lower().endswith('.pdf'):
+                    f.write(f'{sub_indent}{file}\n')
+
+    print(f"DB更新: 追加 {added}件 / 更新 {updated}件 / 削除 {removed}件")
     print(f"Kindleリストが {output_filename} に保存されました。")
-    print(f"データベース {DB_PATH} を更新しました。")
     cleanup_old_kindle_lists(output_filename)
 
 
@@ -307,5 +377,6 @@ def generate_list():
 
 
 if __name__ == '__main__':
+    init_db()
     generate_kindle_list(BASE_DIR)
     app.run(debug=True, host='127.0.0.1', port=8000)

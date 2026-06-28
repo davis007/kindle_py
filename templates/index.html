@@ -13,15 +13,20 @@
       h1 {
         margin-bottom: 20px;
       }
+      h2 {
+        margin-top: 0;
+      }
       .container {
         display: flex;
       }
       .folder-list {
         width: 300px;
         padding-right: 20px;
+        flex-shrink: 0;
       }
       .pdf-list {
         flex-grow: 1;
+        min-width: 0;
       }
       .pdf-grid {
         display: grid;
@@ -48,6 +53,21 @@
         font-size: 11px;
         font-weight: bold;
         pointer-events: none;
+      }
+      .progress-bar {
+        height: 4px;
+        background: #e0e0e0;
+        border-radius: 2px;
+        margin: 4px 4px 2px;
+      }
+      .progress-fill {
+        height: 100%;
+        background: #4caf50;
+        border-radius: 2px;
+      }
+      .progress-text {
+        font-size: 10px;
+        color: #888;
       }
       .folder-link,
       .pdf-link {
@@ -81,6 +101,57 @@
       .search-form input[type="submit"] {
         padding: 5px 10px;
       }
+
+      .recent-section {
+        margin-bottom: 30px;
+        padding: 16px;
+        background: #f9f9f9;
+        border-radius: 8px;
+      }
+      .recent-section h3 {
+        margin: 0 0 12px;
+        font-size: 15px;
+        color: #555;
+      }
+      .recent-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 10px;
+      }
+      .recent-item {
+        background: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 10px;
+        font-size: 12px;
+      }
+      .recent-item a {
+        display: block;
+        text-decoration: none;
+        color: #333;
+        font-weight: bold;
+        margin-bottom: 6px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .recent-item a:hover {
+        text-decoration: underline;
+      }
+      .recent-item .progress-bar {
+        margin: 0 0 4px;
+      }
+      .recent-item .progress-text {
+        color: #888;
+      }
+      .recent-item.completed {
+        border-left: 3px solid #4caf50;
+      }
+      .recent-date {
+        color: #bbb;
+        font-size: 10px;
+        float: right;
+      }
     </style>
   </head>
   <body>
@@ -106,6 +177,7 @@
       >
       {% endif %} {% endfor %}
     </div>
+
     <div class="container">
       <div class="folder-list">
         <h2>フォルダ一覧</h2>
@@ -120,15 +192,47 @@
               >
                 {{ folder.name }}
               </a>
-              {% if folder.children %} {{
-              render_folder_structure(folder.children) }} {% endif %}
+              {% if folder.children %}{{
+              render_folder_structure(folder.children) }}{% endif %}
             </li>
             {% endfor %}
           </ul>
           {% endmacro %} {{ render_folder_structure(folder_structure) }}
         </div>
       </div>
+
       <div class="pdf-list">
+        {% if recent_books and not search_query %}
+        <div class="recent-section">
+          <h3>最近読んだ本</h3>
+          <div class="recent-grid">
+            {% for book in recent_books %}
+            <div
+              class="recent-item {% if book.completed %}completed{% endif %}"
+            >
+              <span class="recent-date">{{ book.updated_at }}</span>
+              <a
+                href="{{ url_for('view_pdf', filename=book.path) }}"
+                target="_blank"
+                title="{{ book.name }}"
+              >
+                {{ book.name }}
+              </a>
+              {% if book.total_pages %}
+              <div class="progress-bar">
+                <div class="progress-fill" style="width: {{ book.pct }}%"></div>
+              </div>
+              <span class="progress-text">
+                {% if book.completed %}読了{% else %}{{ book.last_page }} / {{
+                book.total_pages }}ページ ({{ book.pct }}%){% endif %}
+              </span>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
         <h2>PDF一覧</h2>
         {% if pdfs %}
         <div class="pdf-grid">
@@ -148,6 +252,18 @@
               />
               <p>{{ pdf|basename }}</p>
             </a>
+            {% if pdf in progress_map and not pdf in completed_paths %}
+            <div class="progress-bar">
+              <div
+                class="progress-fill"
+                style="width: {{ progress_map[pdf].pct }}%"
+              ></div>
+            </div>
+            <span class="progress-text">
+              {{ progress_map[pdf].last_page }} / {{
+              progress_map[pdf].total_pages }}ページ
+            </span>
+            {% endif %}
           </div>
           {% endfor %}
         </div>

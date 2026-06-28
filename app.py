@@ -420,6 +420,17 @@ def get_pdf(filename):
         abort(404)
     return send_file(full_path, mimetype='application/pdf')
 
+def cleanup_old_kindle_lists(keep_filename):
+    """最新1件を除いて古い kindleList.txt ファイルを削除する"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    pattern = os.path.join(script_dir, '*_kindleList.txt')
+    import glob
+    old_files = sorted(glob.glob(pattern))
+    for f in old_files:
+        if os.path.basename(f) != os.path.basename(keep_filename):
+            os.remove(f)
+            print(f"古いリストを削除しました: {f}")
+
 def generate_kindle_list(base_dir):
     """
     Kindleライブラリのリストを生成し、テキストファイルとSQLiteデータベースに保存する
@@ -467,6 +478,7 @@ def generate_kindle_list(base_dir):
 
     print(f"Kindleリストが {output_filename} に保存されました。")
     print(f"Kindleリストがデータベース {DB_PATH} に保存されました。")
+    cleanup_old_kindle_lists(output_filename)
 
 @app.route('/generate_list')
 def generate_list():

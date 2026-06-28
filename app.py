@@ -284,7 +284,8 @@ def view_pdf(filename):
     if not os.path.exists(full_path):
         abort(404)
     pdf_url = url_for('get_pdf', filename=filename)
-    return render_template('pdf_viewer.html', pdf_url=pdf_url)
+    title = os.path.splitext(os.path.basename(filename))[0]
+    return render_template('pdf_viewer.html', pdf_url=pdf_url, title=title)
 
 
 @app.route('/get_pdf/<path:filename>')
